@@ -17,7 +17,7 @@ const intentColors: Record<EmailIntent, string> = {
 };
 
 export function EmailDetail({ email }: EmailDetailProps) {
-  const { getContactById, updateEmailStatus, addTask } = useMailStore();
+  const { getContactById, updateEmailStatus, addTask, setSelectedContact } = useMailStore();
   const navigate = useNavigate();
   const [showAddTask, setShowAddTask] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
@@ -30,6 +30,7 @@ export function EmailDetail({ email }: EmailDetailProps) {
   const handleMarkAsRead = () => {
     if (email.status === 'unread') {
       updateEmailStatus(email.id, 'read');
+      localStorage.setItem(`email_${email.id}_status`, 'read');
     }
   };
 
@@ -39,14 +40,15 @@ export function EmailDetail({ email }: EmailDetailProps) {
 
   const handleAddTask = () => {
     if (taskTitle.trim()) {
+      const deadline = taskDeadline || new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
       addTask({
         userId: email.userId,
         emailId: email.id,
         title: taskTitle,
         description: `关联邮件: ${email.subject}`,
         status: 'pending',
-        deadline: taskDeadline || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        reminderAt: new Date().toISOString(),
+        deadline: deadline,
+        reminderAt: deadline,
         createdAt: new Date().toISOString(),
       });
       setTaskTitle('');
@@ -56,10 +58,17 @@ export function EmailDetail({ email }: EmailDetailProps) {
   };
 
   const handleViewContact = () => {
-    navigate(`/contacts/${contact.id}`);
+    setSelectedContact(contact.id);
+    navigate('/contacts');
   };
 
   const entities = email.entities;
+
+  const getSuggestedReminderTime = () => {
+    const now = new Date();
+    const reminderDate = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    return reminderDate.toISOString().slice(0, 16);
+  };
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
@@ -77,7 +86,10 @@ export function EmailDetail({ email }: EmailDetailProps) {
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-gray-900" onClick={handleViewContact} style={{ cursor: 'pointer' }}>
+              <span 
+                className="font-medium text-blue-600 hover:text-blue-800 cursor-pointer" 
+                onClick={handleViewContact}
+              >
                 {contact.name}
               </span>
               <span className="text-gray-400">|</span>
@@ -217,14 +229,21 @@ export function EmailDetail({ email }: EmailDetailProps) {
               value={taskDeadline}
               onChange={(e) => setTaskDeadline(e.target.value)}
               className="input-field"
+              min={new Date().toISOString().slice(0, 16)}
             />
             <button onClick={handleAddTask} className="btn-primary">
               添加
             </button>
-            <button onClick={() => setShowAddTask(false)} className="btn-secondary">
+            <button onClick={() => {
+              setShowAddTask(false);
+              setTaskDeadline('');
+            }} className="btn-secondary">
               取消
             </button>
           </div>
+          <p className="text-xs text-gray-500 mt-2">
+            建议提醒时间：{getSuggestedReminderTime().replace('T', ' ')} (3天后)
+          </p>
         </div>
       )}
     </div>

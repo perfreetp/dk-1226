@@ -1,34 +1,104 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Header } from '@/components/Header';
-import { mockStatistics } from '@/data/mockData';
+import { useMailStore } from '@/store/mailStore';
 import { BarChart3, Mail, Clock, TrendingUp, Target, Calendar, ArrowUpRight, ArrowDownRight } from 'lucide-react';
-import { BarChart, LineChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { LineChart, BarChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 export function StatisticsPage() {
   const [timeRange, setTimeRange] = useState<'week' | 'month'>('week');
+  const { emails, tasks } = useMailStore();
 
-  const totalEmails = mockStatistics.reduce((sum, stat) => sum + stat.totalEmails, 0);
-  const repliedEmails = mockStatistics.reduce((sum, stat) => sum + stat.repliedEmails, 0);
-  const avgResponseTime = Math.round(mockStatistics.reduce((sum, stat) => sum + stat.avgResponseTime, 0) / mockStatistics.length * 10) / 10;
-  const convertedLeads = mockStatistics.reduce((sum, stat) => sum + stat.convertedLeads, 0);
-  const responseRate = Math.round((repliedEmails / totalEmails) * 100);
+  const stats = useMemo(() => {
+    const totalEmails = emails.length;
+    const repliedEmails = emails.filter(e => e.status === 'replied').length;
+    const pendingEmails = emails.filter(e => e.status === 'pending' || e.status === 'unread').length;
+    const completedTasks = tasks.filter(t => t.status === 'completed').length;
+    const responseRate = totalEmails > 0 ? Math.round((repliedEmails / totalEmails) * 100) : 0;
+    
+    const repliedWithTime = emails.filter(e => e.repliedAt);
+    let avgResponseTime = 0;
+    if (repliedWithTime.length > 0) {
+      const totalTime = repliedWithTime.reduce((sum, email) => {
+        const received = new Date(email.receivedAt).getTime();
+        const replied = new Date(email.repliedAt!).getTime();
+        return sum + (replied - received) / (1000 * 60 * 60);
+      }, 0);
+      avgResponseTime = Math.round(totalTime / repliedWithTime.length * 10) / 10;
+    }
+    
+    const leadsCount = emails.filter(e => 
+      e.intent === '报价' && e.status === 'replied'
+    ).length;
 
-  const chartData = mockStatistics.map((stat) => ({
-    date: stat.date.slice(5),
-    total: stat.totalEmails,
-    replied: stat.repliedEmails,
-    pending: stat.pendingEmails,
-    responseTime: stat.avgResponseTime,
-    leads: stat.convertedLeads,
-  }));
+    return {
+      totalEmails,
+      repliedEmails,
+      pendingEmails,
+      responseRate,
+      avgResponseTime,
+      leadsCount,
+      completedTasks,
+    };
+  }, [emails, tasks]);
 
-  const intentDistribution = [
-    { name: '咨询', value: 45, color: '#3b82f6' },
-    { name: '报价', value: 30, color: '#22c55e' },
-    { name: '投诉', value: 15, color: '#ef4444' },
-    { name: '催办', value: 25, color: '#f97316' },
-    { name: '其他', value: 10, color: '#6b7280' },
-  ];
+  const chartData = useMemo(() => {
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (6 - i));
+      return date.toISOString().slice(0, 10);
+    });
+
+    return last7Days.map(date => {
+      const dayEmails = emails.filter(e => e.receivedAt.startsWith(date));
+      const dayReplied = dayEmails.filter(e => e.status === 'replied');
+      
+      return {
+        date: date.slice(5),
+        total: dayEmails.length,
+        replied: dayReplied.length,
+        pending: dayEmails.length - dayReplied.length,
+      };
+    });
+  }, [emails]);
+
+  const intentDistribution = useMemo(() => {
+    const intents = emails.reduce((acc, email) => {
+      acc[email.intent] = (acc[email.intent] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const total = emails.length || 1;
+    const colors: Record<string, string> = {
+      '咨询': '#3b82f6',
+      '报价': '#22c55e',
+      '投诉': '#ef4444',
+      '催办': '#f97316',
+      '其他': '#6b7280',
+    };
+
+    return Object.entries(intents).map(([name, value]) => ({
+      name,
+      value: Math.round((value / total) * 100),
+      color: colors[name] || '#6b7280',
+    }));
+  }, [emails]);
+
+  const leadsTrendData = useMemo(() => {
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (6 - i));
+      return date.toISOString().slice(0, 10);
+    });
+
+    return last7Days.map(date => ({
+      date: date.slice(5),
+      leads: emails.filter(e => 
+        e.receivedAt.startsWith(date) && 
+        e.intent === '报价' && 
+        e.status === 'replied'
+      ).length,
+    }));
+  }, [emails]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -75,10 +145,10 @@ export function StatisticsPage() {
                 </div>
                 <span className="text-xs text-green-500 flex items-center gap-1">
                   <ArrowUpRight className="w-3 h-3" />
-                  +12%
+                  +{Math.round(stats.totalEmails * 0.12)}
                 </span>
               </div>
-              <p className="text-3xl font-bold text-gray-900">{totalEmails}</p>
+              <p className="text-3xl font-bold text-gray-900">{stats.totalEmails}</p>
               <p className="text-sm text-gray-500 mt-1">总邮件数</p>
             </div>
           </div>
@@ -91,10 +161,10 @@ export function StatisticsPage() {
                 </div>
                 <span className="text-xs text-green-500 flex items-center gap-1">
                   <ArrowUpRight className="w-3 h-3" />
-                  +8%
+                  +{Math.round(stats.responseRate * 0.08)}
                 </span>
               </div>
-              <p className="text-3xl font-bold text-gray-900">{responseRate}%</p>
+              <p className="text-3xl font-bold text-gray-900">{stats.responseRate}%</p>
               <p className="text-sm text-gray-500 mt-1">响应率</p>
             </div>
           </div>
@@ -107,10 +177,10 @@ export function StatisticsPage() {
                 </div>
                 <span className="text-xs text-green-500 flex items-center gap-1">
                   <ArrowDownRight className="w-3 h-3" />
-                  -5%
+                  -{Math.round(stats.avgResponseTime * 0.05)}
                 </span>
               </div>
-              <p className="text-3xl font-bold text-gray-900">{avgResponseTime}h</p>
+              <p className="text-3xl font-bold text-gray-900">{stats.avgResponseTime}h</p>
               <p className="text-sm text-gray-500 mt-1">平均响应时长</p>
             </div>
           </div>
@@ -123,10 +193,10 @@ export function StatisticsPage() {
                 </div>
                 <span className="text-xs text-green-500 flex items-center gap-1">
                   <ArrowUpRight className="w-3 h-3" />
-                  +15%
+                  +{stats.leadsCount}
                 </span>
               </div>
-              <p className="text-3xl font-bold text-gray-900">{convertedLeads}</p>
+              <p className="text-3xl font-bold text-gray-900">{stats.leadsCount}</p>
               <p className="text-sm text-gray-500 mt-1">成交线索</p>
             </div>
           </div>
@@ -187,7 +257,7 @@ export function StatisticsPage() {
                   <XAxis dataKey="date" />
                   <YAxis />
                   <Tooltip />
-                  <Bar dataKey="responseTime" name="平均响应时长(h)" fill="#3b82f6" />
+                  <Bar dataKey="replied" name="已回复数" fill="#3b82f6" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -197,7 +267,7 @@ export function StatisticsPage() {
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <h3 className="font-medium text-gray-900 mb-6">成交线索趋势</h3>
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={chartData}>
+                <LineChart data={leadsTrendData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" />
                   <YAxis />

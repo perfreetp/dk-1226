@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
 import { useMailStore } from '@/store/mailStore';
 import { Email, ToneType } from '@/types';
-import { FileEdit, Send, Save, Eye, Languages, Sparkles, AlertTriangle, CheckCircle, Paperclip, User } from 'lucide-react';
+import { FileEdit, Send, Save, Eye, Languages, Sparkles, AlertTriangle, CheckCircle, Paperclip, User, Clock } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 const toneOptions: { value: ToneType; label: string; description: string }[] = [
@@ -12,106 +12,144 @@ const toneOptions: { value: ToneType; label: string; description: string }[] = [
   { value: 'professional', label: '专业', description: '专业严谨' },
 ];
 
+type ApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
+interface EmailDraft {
+  zh: string;
+  en: string;
+}
+
 export function ComposePage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { templates, contacts } = useMailStore();
+  const { templates, contacts, addTask, emails, updateEmailStatus } = useMailStore();
   const originalEmail = location.state?.email as Email | undefined;
 
   const [to, setTo] = useState(originalEmail ? contacts.find(c => c.id === originalEmail.contactId)?.email || '' : '');
   const [subject, setSubject] = useState(originalEmail ? `回复: ${originalEmail.subject}` : '');
-  const [content, setContent] = useState('');
+  const [drafts, setDrafts] = useState<EmailDraft>({ zh: '', en: '' });
   const [tone, setTone] = useState<ToneType>('professional');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isChinese, setIsChinese] = useState(true);
   const [showPreview, setShowPreview] = useState(false);
   const [needsApproval, setNeedsApproval] = useState(false);
+  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>('none');
   const [attachments, setAttachments] = useState<string[]>([]);
   const [checkResults, setCheckResults] = useState<{ greeting: boolean; attachment: boolean }>({ greeting: true, attachment: true });
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [reminderTime, setReminderTime] = useState('');
 
-  const generateReply = async () => {
-    setIsGenerating(true);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    const replies: Record<ToneType, string> = {
-      formal: `尊敬的${originalEmail?.entities.customerName || '客户'}：
+  const content = isChinese ? drafts.zh : drafts.en;
+
+  const setContent = (value: string) => {
+    if (isChinese) {
+      setDrafts(prev => ({ ...prev, zh: value }));
+    } else {
+      setDrafts(prev => ({ ...prev, en: value }));
+    }
+  };
+
+  useEffect(() => {
+    if (needsApproval && approvalStatus === 'none') {
+      setApprovalStatus('pending');
+    } else if (!needsApproval) {
+      setApprovalStatus('none');
+    }
+  }, [needsApproval]);
+
+  const generateChineseContent = (toneType: ToneType): string => {
+    const intents: Record<string, string> = {
+      '报价': '报价请求',
+      '投诉': '投诉事项',
+      '咨询': '咨询问题',
+      '催办': '催促事项',
+      '其他': '需求',
+    };
+
+    const intent = originalEmail?.intent || '其他';
+    const customerName = originalEmail?.entities.customerName || '客户';
+    const product = originalEmail?.entities.product || '产品';
+    const amount = originalEmail?.entities.amount || 0;
+
+    const templatesByTone: Record<ToneType, string> = {
+      formal: `尊敬的${customerName}：
 
 您好！
 
-关于您邮件中提到的${originalEmail?.entities.product || '事宜'}，我们非常重视。
+关于您邮件中提到的${product}，我们非常重视。
 
-${originalEmail?.intent === '报价' ? `根据您的需求，我们为您提供以下报价：
-- 产品：${originalEmail?.entities.product}
-- 数量：${originalEmail?.entities.amount}
-- 总价：${(originalEmail?.entities.amount || 0) * 50}元
+${intent === '报价' ? `根据您的需求，我们为您提供以下报价：
+- 产品：${product}
+- 数量：${amount}件
+- 总价：${amount * 50}元
 
 请确认是否接受此报价。` : ''}
 
-${originalEmail?.intent === '投诉' ? `非常抱歉给您带来不便。我们已收到您的反馈，正在紧急处理中。
+${intent === '投诉' ? `非常抱歉给您带来不便。我们已收到您的反馈，正在紧急处理中。
 我们会在24小时内给出解决方案，请您耐心等待。` : ''}
 
-${originalEmail?.intent === '咨询' ? `关于您的咨询，我们已准备好相关资料。
+${intent === '咨询' ? `关于您的咨询，我们已准备好相关资料。
 附件中包含详细的技术文档，请查收。` : ''}
 
-${originalEmail?.intent === '催办' ? `已收到您的催促，我们正在加急处理合同审批。
+${intent === '催办' ? `已收到您的催促，我们正在加急处理合同审批。
 预计明天中午前完成，请您放心。` : ''}
 
 如有任何疑问，请随时联系我。
 
 此致
 张三`,
-      friendly: `Hi ${originalEmail?.entities.customerName || '朋友'}！
+      friendly: `Hi ${customerName}！
 
 收到您的邮件啦~
 
-${originalEmail?.intent === '报价' ? `关于${originalEmail?.entities.product}的价格，我们给您申请了优惠价哦！
-1000件的话每件只要50元，总共50000元，划算吧！😉` : ''}
+${intent === '报价' ? `关于${product}的价格，我们给您申请了优惠价哦！
+${amount}件的话每件只要50元，总共${amount * 50}元，划算吧！😉` : ''}
 
-${originalEmail?.intent === '投诉' ? `哎呀，非常抱歉给您添麻烦了！我们已经在处理啦，保证给您一个满意的答复！` : ''}
+${intent === '投诉' ? `哎呀，非常抱歉给您添麻烦了！我们已经在处理啦，保证给您一个满意的答复！` : ''}
 
-${originalEmail?.intent === '咨询' ? `关于API集成的问题，我整理了详细文档发给您，有问题随时问我哈！` : ''}
+${intent === '咨询' ? `关于${product}的问题，我整理了详细文档发给您，有问题随时问我哈！` : ''}
 
-${originalEmail?.intent === '催办' ? `收到收到！合同审批我已经催法务部门了，应该明天就能搞定！` : ''}
+${intent === '催办' ? `收到收到！合同审批我已经催法务部门了，应该明天就能搞定！` : ''}
 
 等您回复哦~
 
 张三`,
-      urgent: `${originalEmail?.entities.customerName || '客户'}：
+      urgent: `${customerName}：
 
 紧急通知！
 
-${originalEmail?.intent === '报价' ? `关于${originalEmail?.entities.product}报价，由于库存紧张，请尽快确认！
-报价有效期至${originalEmail?.entities.deadline}。` : ''}
+${intent === '报价' ? `关于${product}报价，由于库存紧张，请尽快确认！
+报价有效期至本周五。` : ''}
 
-${originalEmail?.intent === '投诉' ? `关于您反馈的质量问题，我们已紧急处理！
+${intent === '投诉' ? `关于您反馈的质量问题，我们已紧急处理！
 解决方案将于今日18:00前发送，请密切关注邮件。` : ''}
 
-${originalEmail?.intent === '咨询' ? `关于您的技术咨询，时间紧迫，请尽快确认需求细节！` : ''}
+${intent === '咨询' ? `关于您的技术咨询，时间紧迫，请尽快确认需求细节！` : ''}
 
-${originalEmail?.intent === '催办' ? `合同审批已加急处理中！
+${intent === '催办' ? `合同审批已加急处理中！
 预计今日12:00前完成，请保持电话畅通。` : ''}
 
 请尽快回复！
 
 张三`,
-      professional: `尊敬的${originalEmail?.entities.customerName || '客户'}：
+      professional: `尊敬的${customerName}：
 
 感谢您的来信。
 
-针对您提出的${originalEmail?.intent === '报价' ? '报价请求' : originalEmail?.intent === '投诉' ? '投诉事项' : originalEmail?.intent === '咨询' ? '咨询问题' : '需求'}，我们进行了认真研究。
+针对您提出的${intents[intent]}，我们进行了认真研究。
 
-${originalEmail?.intent === '报价' ? `经核算，${originalEmail?.entities.product}的报价如下：
+${intent === '报价' ? `经核算，${product}的报价如下：
 - 单价：50元/件
-- 数量：${originalEmail?.entities.amount}件
-- 合计：${(originalEmail?.entities.amount || 0) * 50}元
+- 数量：${amount}件
+- 合计：${amount * 50}元
 
 付款方式：预付30%，发货前付清余款。` : ''}
 
-${originalEmail?.intent === '投诉' ? `经初步调查，问题原因已确认。我们将在3个工作日内提供完整解决方案，并安排专人跟进。` : ''}
+${intent === '投诉' ? `经初步调查，问题原因已确认。我们将在3个工作日内提供完整解决方案，并安排专人跟进。` : ''}
 
-${originalEmail?.intent === '咨询' ? `附件为您所需的技术文档，包含API接口规范、集成示例代码及常见问题解答。` : ''}
+${intent === '咨询' ? `附件为您所需的技术文档，包含详细说明及常见问题解答。` : ''}
 
-${originalEmail?.intent === '催办' ? `合同审批流程已进入最后阶段，预计明日完成。审批完成后将立即通知您。` : ''}
+${intent === '催办' ? `合同审批流程已进入最后阶段，预计明日完成。审批完成后将立即通知您。` : ''}
 
 如有任何疑问，请随时与我联系。
 
@@ -120,43 +158,147 @@ ${originalEmail?.intent === '催办' ? `合同审批流程已进入最后阶段�
 张三`,
     };
 
-    setContent(replies[tone]);
+    return templatesByTone[toneType];
+  };
+
+  const generateEnglishContent = (toneType: ToneType): string => {
+    const intents: Record<string, string> = {
+      '报价': 'quotation request',
+      '投诉': 'complaint',
+      '咨询': 'inquiry',
+      '催办': 'follow-up request',
+      '其他': 'request',
+    };
+
+    const intent = originalEmail?.intent || '其他';
+    const customerName = originalEmail?.entities.customerName || 'Customer';
+    const product = originalEmail?.entities.product || 'product';
+    const amount = originalEmail?.entities.amount || 0;
+
+    const templatesByTone: Record<ToneType, string> = {
+      formal: `Dear ${customerName},
+
+I hope this email finds you well.
+
+We are writing to acknowledge receipt of your inquiry regarding ${product}.
+
+${intent === '报价' ? `Based on your requirements, we are pleased to offer the following quotation:
+- Product: ${product}
+- Quantity: ${amount} units
+- Total Price: ${amount * 50} CNY
+
+Please confirm if you accept this offer.` : ''}
+
+${intent === '投诉' ? `We sincerely apologize for any inconvenience caused. We have received your feedback and are actively working on a resolution.
+We will provide a solution within 24 hours.` : ''}
+
+${intent === '咨询' ? `Regarding your inquiry, we have prepared the relevant materials.
+Please find the detailed technical documentation attached.` : ''}
+
+${intent === '催办' ? `We acknowledge your request for expedited processing.
+The contract approval is being expedited and is expected to be completed by tomorrow noon.` : ''}
+
+Please do not hesitate to contact me if you have any questions.
+
+Best regards,
+Zhang San`,
+      friendly: `Hi ${customerName}!
+
+Great to hear from you~
+
+${intent === '报价' ? `Great news! We've got a special discount for you on ${product}!
+${amount} units at just 50 CNY each - that's ${amount * 50} CNY total. Pretty good deal, right? 😉` : ''}
+
+${intent === '投诉' ? `Oh no, we're so sorry for the trouble! We're on it right away and promise to give you a satisfactory solution!` : ''}
+
+${intent === '咨询' ? `About the ${product}, I've prepared detailed documentation for you. Just let me know if you have any questions!` : ''}
+
+${intent === '催办' ? `Got it, got it! I've already nudged the legal team about the contract approval. Should be done tomorrow!` : ''}
+
+Looking forward to your reply~
+
+Zhang San`,
+      urgent: `Dear ${customerName},
+
+URGENT NOTICE
+
+${intent === '报价' ? `Regarding the ${product} quotation, please be advised that due to limited inventory, we kindly request your prompt confirmation!
+This quotation is valid until this Friday.` : ''}
+
+${intent === '投诉' ? `Regarding your complaint, we have escalated this matter for immediate attention.
+A resolution will be sent to you by 6:00 PM today. Please stay tuned.` : ''}
+
+${intent === '咨询' ? `Regarding your technical inquiry, time is of the essence. Please confirm the requirements as soon as possible!` : ''}
+
+${intent === '催办' ? `The contract approval has been expedited!
+Expected completion by 12:00 PM today. Please ensure you are available by phone.` : ''}
+
+Please respond at your earliest convenience.
+
+Best regards,
+Zhang San`,
+      professional: `Dear ${customerName},
+
+Thank you for your correspondence.
+
+We have carefully reviewed your ${intents[intent]} regarding ${product}.
+
+${intent === '报价' ? `After careful evaluation, we are pleased to provide the following quotation:
+- Unit Price: 50 CNY
+- Quantity: ${amount} units
+- Total: ${amount * 50} CNY
+
+Payment Terms: 30% deposit, balance before shipment.` : ''}
+
+${intent === '投诉' ? `Following our initial investigation, the root cause has been identified. We will provide a comprehensive solution within 3 business days and assign a dedicated representative to follow up.` : ''}
+
+${intent === '咨询' ? `Please find attached the technical documentation you requested, including specifications, integration examples, and FAQ.` : ''}
+
+${intent === '催办' ? `The contract approval process has reached its final stage and is expected to be completed tomorrow. You will be notified immediately upon approval.` : ''}
+
+Should you have any questions, please do not hesitate to contact me.
+
+Sincerely,
+Zhang San`,
+    };
+
+    return templatesByTone[toneType];
+  };
+
+  const generateReply = async () => {
+    setIsGenerating(true);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    const zhContent = generateChineseContent(tone);
+    const enContent = generateEnglishContent(tone);
+    
+    setDrafts({ zh: zhContent, en: enContent });
     setIsGenerating(false);
   };
 
-  const rewriteContent = async () => {
+  const translateContent = async () => {
     setIsGenerating(true);
     await new Promise(resolve => setTimeout(resolve, 1000));
     
     if (isChinese) {
-      setContent(content.replace(/尊敬的/g, '亲爱的').replace(/此致/g, '祝好').replace(/敬礼/g, ''));
+      const enContent = generateEnglishContent(tone);
+      setDrafts(prev => ({ ...prev, en: enContent }));
+      setIsChinese(false);
     } else {
-      const englishContent = `Dear ${originalEmail?.entities.customerName || 'Customer'},
-
-Thank you for your email regarding ${originalEmail?.entities.product || 'your inquiry'}.
-
-${originalEmail?.intent === '报价' ? `We are pleased to provide the following quotation:
-- Product: ${originalEmail?.entities.product}
-- Quantity: ${originalEmail?.entities.amount}
-- Total: ${(originalEmail?.entities.amount || 0) * 50} CNY
-
-Please confirm if you accept this offer.` : ''}
-
-${originalEmail?.intent === '投诉' ? `We sincerely apologize for the inconvenience caused. Our team is investigating the issue and will provide a resolution within 24 hours.` : ''}
-
-${originalEmail?.intent === '咨询' ? `Please find attached the technical documentation you requested. Let me know if you need further clarification.` : ''}
-
-${originalEmail?.intent === '催办' ? `We are expediting the contract approval process. It should be completed by tomorrow noon.` : ''}
-
-Best regards,
-Zhang San`;
-      setContent(englishContent);
+      const zhContent = generateChineseContent(tone);
+      setDrafts(prev => ({ ...prev, zh: zhContent }));
+      setIsChinese(true);
     }
     setIsGenerating(false);
   };
 
   const checkContent = () => {
-    const hasGreeting = content.includes('尊敬') || content.includes('Dear') || content.includes('Hi') || content.includes('你好');
+    const textToCheck = content.toLowerCase();
+    const hasGreeting = textToCheck.includes('dear') || 
+                        textToCheck.includes('hi') || 
+                        textToCheck.includes('您好') || 
+                        textToCheck.includes('尊敬') ||
+                        textToCheck.includes('hello');
     setCheckResults({
       greeting: hasGreeting,
       attachment: attachments.length > 0,
@@ -165,11 +307,33 @@ Zhang San`;
 
   const handleSend = () => {
     if (needsApproval) {
-      alert('邮件已提交审批，请等待审批通过后发送');
+      setShowReminderModal(true);
     } else {
-      alert('邮件已发送！');
-      navigate('/');
+      completeSend();
     }
+  };
+
+  const completeSend = () => {
+    if (originalEmail) {
+      updateEmailStatus(originalEmail.id, 'replied');
+    }
+    alert('邮件已发送！');
+    navigate('/');
+  };
+
+  const handleApprovalSubmit = () => {
+    setShowReminderModal(true);
+  };
+
+  const handleApprovalConfirm = () => {
+    setShowReminderModal(false);
+    if (approvalStatus === 'pending') {
+      setApprovalStatus('approved');
+    }
+  };
+
+  const handleFinalSend = () => {
+    completeSend();
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -182,6 +346,24 @@ Zhang San`;
 
   const removeAttachment = (index: number) => {
     setAttachments(attachments.filter((_, i) => i !== index));
+  };
+
+  const getApprovalStatusText = () => {
+    switch (approvalStatus) {
+      case 'pending': return '审批中';
+      case 'approved': return '已通过';
+      case 'rejected': return '已驳回';
+      default: return '';
+    }
+  };
+
+  const getApprovalStatusColor = () => {
+    switch (approvalStatus) {
+      case 'pending': return 'bg-amber-100 text-amber-700';
+      case 'approved': return 'bg-green-100 text-green-700';
+      case 'rejected': return 'bg-red-100 text-red-700';
+      default: return '';
+    }
   };
 
   return (
@@ -208,8 +390,8 @@ Zhang San`;
                 </button>
 
                 <button
-                  onClick={rewriteContent}
-                  disabled={!content || isGenerating}
+                  onClick={translateContent}
+                  disabled={!drafts.zh || isGenerating}
                   className="w-full btn-outline flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <Languages className="w-4 h-4" />
@@ -253,7 +435,10 @@ Zhang San`;
                 {templates.map((template) => (
                   <button
                     key={template.id}
-                    onClick={() => setContent(template.content)}
+                    onClick={() => {
+                      setDrafts({ zh: template.content, en: '' });
+                      setIsChinese(true);
+                    }}
                     className="w-full p-3 rounded-lg text-left bg-gray-50 hover:bg-gray-100 transition-colors"
                   >
                     <p className="font-medium text-gray-900 text-sm">{template.name}</p>
@@ -280,7 +465,12 @@ Zhang San`;
                     placeholder="输入收件人邮箱"
                   />
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-4">
+                  {approvalStatus !== 'none' && (
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${getApprovalStatusColor()}`}>
+                      {getApprovalStatusText()}
+                    </span>
+                  )}
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -346,7 +536,7 @@ Zhang San`;
                     </span>
                   </div>
                 </div>
-              ) : checkContent && content ? (
+              ) : content ? (
                 <div className="p-4 bg-green-50 border-t border-green-100">
                   <div className="flex items-center gap-2 text-green-700">
                     <CheckCircle className="w-5 h-5" />
@@ -380,24 +570,113 @@ Zhang San`;
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button className="btn-outline flex items-center gap-2">
-                    <FileEdit className="w-4 h-4" />
-                    取消
-                  </button>
-                  <button
-                    onClick={handleSend}
-                    disabled={!to || !subject || !content}
-                    className="btn-primary flex items-center gap-2 disabled:opacity-50"
-                  >
-                    <Send className="w-4 h-4" />
-                    {needsApproval ? '提交审批' : '发送'}
-                  </button>
+                  {needsApproval && approvalStatus === 'pending' && (
+                    <button
+                      onClick={() => setApprovalStatus('rejected')}
+                      className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                    >
+                      模拟驳回
+                    </button>
+                  )}
+                  {needsApproval && approvalStatus === 'rejected' && (
+                    <button
+                      onClick={handleApprovalConfirm}
+                      className="px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
+                    >
+                      重新提交审批
+                    </button>
+                  )}
+                  {needsApproval && approvalStatus === 'approved' && (
+                    <button
+                      onClick={handleFinalSend}
+                      disabled={!to || !subject || !content}
+                      className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <Send className="w-4 h-4" />
+                      确认发送
+                    </button>
+                  )}
+                  {!needsApproval || approvalStatus !== 'approved' ? (
+                    <button
+                      onClick={needsApproval && approvalStatus === 'none' ? handleApprovalSubmit : handleSend}
+                      disabled={!to || !subject || !content || (needsApproval && approvalStatus === 'pending')}
+                      className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <Send className="w-4 h-4" />
+                      {needsApproval && approvalStatus === 'none' ? '提交审批' : '发送'}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      {showReminderModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                <Clock className="w-6 h-6 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900">设置跟进提醒</h3>
+                <p className="text-sm text-gray-500">邮件发送后自动创建跟进任务</p>
+              </div>
+            </div>
+
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">下次跟进时间</label>
+                <input
+                  type="datetime-local"
+                  value={reminderTime}
+                  onChange={(e) => setReminderTime(e.target.value)}
+                  className="input-field"
+                  min={new Date().toISOString().slice(0, 16)}
+                />
+                <p className="text-xs text-gray-500 mt-1">建议：{isChinese ? '3天后' : '3 days later'}</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowReminderModal(false)}
+                className="flex-1 btn-secondary"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  if (originalEmail) {
+                    const reminderDate = reminderTime || new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+                    addTask({
+                      userId: originalEmail.userId,
+                      emailId: originalEmail.id,
+                      title: `跟进: ${originalEmail.subject}`,
+                      description: `来自联系人: ${to}`,
+                      status: 'pending',
+                      deadline: reminderDate,
+                      reminderAt: reminderDate,
+                      createdAt: new Date().toISOString(),
+                    });
+                  }
+                  setShowReminderModal(false);
+                  if (approvalStatus === 'pending') {
+                    setApprovalStatus('approved');
+                  } else {
+                    completeSend();
+                  }
+                }}
+                className="flex-1 btn-primary"
+              >
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,14 +1,33 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
 import { useMailStore } from '@/store/mailStore';
 import { Contact } from '@/types';
 import { Users, Search, User, Building2, MailIcon, Phone, Tag, Mail, Clock, Edit2, Trash2, X } from 'lucide-react';
+import { useParams } from 'react-router-dom';
 
 export function ContactsPage() {
-  const { contacts, getEmailById } = useMailStore();
+  const params = useParams();
+  const { contacts, getEmailById, selectedContactId, setSelectedContact } = useMailStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [selectedContact, setSelectedContactLocal] = useState<Contact | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  useEffect(() => {
+    if (params.id) {
+      const contact = contacts.find(c => c.id === params.id);
+      if (contact) {
+        setSelectedContactLocal(contact);
+        setSelectedContact(contact.id);
+      }
+    } else if (selectedContactId) {
+      const contact = contacts.find(c => c.id === selectedContactId);
+      if (contact) {
+        setSelectedContactLocal(contact);
+      }
+    } else {
+      setSelectedContactLocal(null);
+    }
+  }, [params.id, selectedContactId, contacts, setSelectedContact]);
 
   const filteredContacts = contacts.filter(contact => {
     if (!searchQuery) return true;
@@ -51,7 +70,10 @@ export function ContactsPage() {
                 {filteredContacts.map((contact) => (
                   <div
                     key={contact.id}
-                    onClick={() => setSelectedContact(contact)}
+                    onClick={() => {
+                      setSelectedContactLocal(contact);
+                      setSelectedContact(contact.id);
+                    }}
                     className={`p-4 rounded-xl cursor-pointer transition-all duration-200 hover:shadow-md ${
                       selectedContact?.id === contact.id
                         ? 'bg-blue-50 ring-2 ring-blue-500'
@@ -159,24 +181,21 @@ export function ContactsPage() {
                     往来邮件记录
                   </h3>
                   <div className="space-y-3">
-                    {getContactEmails(selectedContact.id).map((email) => {
-                      const contact = getEmailById(email.id);
-                      return (
-                        <div
-                          key={email.id}
-                          className="p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-medium text-gray-900">{email.subject}</span>
-                            <span className="text-xs text-gray-400">
-                              <Clock className="w-3 h-3 inline mr-1" />
-                              {new Date(email.receivedAt).toLocaleDateString('zh-CN')}
-                            </span>
-                          </div>
-                          <p className="text-sm text-gray-500 line-clamp-2">{email.content}</p>
+                    {getContactEmails(selectedContact.id).map((email) => (
+                      <div
+                        key={email.id}
+                        className="p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-medium text-gray-900">{email.subject}</span>
+                          <span className="text-xs text-gray-400">
+                            <Clock className="w-3 h-3 inline mr-1" />
+                            {new Date(email.receivedAt).toLocaleDateString('zh-CN')}
+                          </span>
                         </div>
-                      );
-                    })}
+                        <p className="text-sm text-gray-500 line-clamp-2">{email.content}</p>
+                      </div>
+                    ))}
                     {getContactEmails(selectedContact.id).length === 0 && (
                       <p className="text-center text-gray-400 py-8">暂无往来邮件</p>
                     )}
