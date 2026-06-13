@@ -12,8 +12,6 @@ const toneOptions: { value: ToneType; label: string; description: string }[] = [
   { value: 'professional', label: '专业', description: '专业严谨' },
 ];
 
-type ApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected';
-
 interface EmailDraft {
   zh: string;
   en: string;
@@ -22,9 +20,14 @@ interface EmailDraft {
 export function ComposePage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { templates, contacts, addTask, emails, updateEmailStatus } = useMailStore();
+  const { 
+    templates, contacts, addTask, emails, 
+    updateEmailStatus, updateEmailApprovalStatus, submitForApproval, getEmailById 
+  } = useMailStore();
+  
   const originalEmail = location.state?.email as Email | undefined;
-
+  const emailFromStore = originalEmail ? getEmailById(originalEmail.id) : undefined;
+  
   const [to, setTo] = useState(originalEmail ? contacts.find(c => c.id === originalEmail.contactId)?.email || '' : '');
   const [subject, setSubject] = useState(originalEmail ? `回复: ${originalEmail.subject}` : '');
   const [drafts, setDrafts] = useState<EmailDraft>({ zh: '', en: '' });
@@ -33,11 +36,13 @@ export function ComposePage() {
   const [isChinese, setIsChinese] = useState(true);
   const [showPreview, setShowPreview] = useState(false);
   const [needsApproval, setNeedsApproval] = useState(false);
-  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>('none');
   const [attachments, setAttachments] = useState<string[]>([]);
   const [checkResults, setCheckResults] = useState<{ greeting: boolean; attachment: boolean }>({ greeting: true, attachment: true });
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [reminderTime, setReminderTime] = useState('');
+
+  const currentApprovalStatus = emailFromStore?.approvalStatus || 'none';
+  const approvalHistory = emailFromStore?.approvalHistory || [];
 
   const content = isChinese ? drafts.zh : drafts.en;
 
@@ -50,12 +55,10 @@ export function ComposePage() {
   };
 
   useEffect(() => {
-    if (needsApproval && approvalStatus === 'none') {
-      setApprovalStatus('pending');
-    } else if (!needsApproval) {
-      setApprovalStatus('none');
+    if (emailFromStore && emailFromStore.approvalStatus !== 'none') {
+      setNeedsApproval(true);
     }
-  }, [needsApproval]);
+  }, [emailFromStore]);
 
   const generateNextFollowUpTime = () => {
     const now = new Date();
@@ -313,11 +316,11 @@ Zhang San`,
   };
 
   const handleSend = () => {
-    if (needsApproval && approvalStatus !== 'approved') {
+    if (needsApproval && currentApprovalStatus !== 'approved') {
       return;
     }
-    setShowReminderModal(true);
     setReminderTime(generateNextFollowUpTime());
+    setShowReminderModal(true);
   };
 
   const createFollowUpTask = (reminderDate: string) => {
@@ -352,21 +355,23 @@ Zhang San`,
     }
     setShowReminderModal(false);
     alert('邮件已发送！\n已自动创建跟进任务，请记得查看跟进任务页面。');
-    navigate('/tasks');
+    navigate('/');
   };
 
   const handleApprovalSubmit = () => {
-    setApprovalStatus('pending');
+    if (originalEmail) {
+      submitForApproval(originalEmail.id, content);
+    }
   };
 
   const handleApprovalConfirm = () => {
-    if (approvalStatus === 'rejected') {
-      setApprovalStatus('pending');
+    if (originalEmail && currentApprovalStatus === 'rejected') {
+      submitForApproval(originalEmail.id, content);
     }
   };
 
   const handleFinalSend = () => {
-    if (approvalStatus !== 'approved') {
+    if (currentApprovalStatus !== 'approved') {
       return;
     }
     handleSend();
@@ -385,7 +390,7 @@ Zhang San`,
   };
 
   const getApprovalStatusText = () => {
-    switch (approvalStatus) {
+    switch (currentApprovalStatus) {
       case 'pending': return '审批中';
       case 'approved': return '已通过';
       case 'rejected': return '已驳回';
@@ -394,7 +399,7 @@ Zhang San`,
   };
 
   const getApprovalStatusColor = () => {
-    switch (approvalStatus) {
+    switch (currentApprovalStatus) {
       case 'pending': return 'bg-amber-100 text-amber-700';
       case 'approved': return 'bg-green-100 text-green-700';
       case 'rejected': return 'bg-red-100 text-red-700';
@@ -404,7 +409,7 @@ Zhang San`,
 
   const canSend = () => {
     if (!to || !subject || !content) return false;
-    if (needsApproval && approvalStatus !== 'approved') return false;
+    if (needsApproval && currentApprovalStatus !== 'approved') return false;
     return true;
   };
 
@@ -508,7 +513,7 @@ Zhang San`,
                   />
                 </div>
                 <div className="flex items-center gap-4">
-                  {approvalStatus !== 'none' && (
+                  {currentApprovalStatus !== 'none' && (
                     <span className={`px-3 py-1 rounded-full text-sm font-medium ${getApprovalStatusColor()}`}>
                       {getApprovalStatusText()}
                     </span>
@@ -517,19 +522,37 @@ Zhang San`,
                     <input
                       type="checkbox"
                       checked={needsApproval}
-                      onChange={(e) => {
-                        if (approvalStatus === 'rejected' || approvalStatus === 'approved') {
-                          return;
-                        }
-                        setNeedsApproval(e.target.checked);
-                      }}
-                      disabled={approvalStatus === 'rejected' || approvalStatus === 'approved'}
+                      onChange={(e) => setNeedsApproval(e.target.checked)}
+                      disabled={currentApprovalStatus === 'rejected' || currentApprovalStatus === 'approved'}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
                     />
                     <span className="text-sm text-gray-600">需要审批</span>
                   </label>
                 </div>
               </div>
+
+              {approvalHistory.length > 0 && (
+                <div className="p-4 bg-gray-50 border-b border-gray-100">
+                  <p className="text-sm font-medium text-gray-700 mb-2">审批历史（第{approvalHistory.length}轮）</p>
+                  <div className="space-y-1">
+                    {approvalHistory.slice(-2).map((record, index) => (
+                      <div key={record.id} className="text-xs text-gray-500 flex items-center gap-2">
+                        <span className={`px-1.5 py-0.5 rounded ${
+                          record.status === 'approved' ? 'bg-green-100 text-green-700' :
+                          record.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                          'bg-amber-100 text-amber-700'
+                        }`}>
+                          {record.status === 'approved' ? '通过' : record.status === 'rejected' ? '驳回' : '待审'}
+                        </span>
+                        <span>{record.submitterName}</span>
+                        <span>{new Date(record.submittedAt).toLocaleString('zh-CN')}</span>
+                        {record.reviewerName && <span>→ {record.reviewerName}</span>}
+                        {record.rejectReason && <span className="text-red-600">原因: {record.rejectReason}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="p-4 border-b border-gray-100">
                 <div className="flex items-center gap-2">
@@ -618,15 +641,15 @@ Zhang San`,
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
-                  {needsApproval && approvalStatus === 'pending' && (
+                  {needsApproval && currentApprovalStatus === 'pending' && (
                     <button
-                      onClick={() => setApprovalStatus('rejected')}
+                      onClick={() => originalEmail && updateEmailApprovalStatus(originalEmail.id, 'rejected', '内容需要修改')}
                       className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
                     >
                       模拟驳回
                     </button>
                   )}
-                  {needsApproval && approvalStatus === 'rejected' && (
+                  {needsApproval && currentApprovalStatus === 'rejected' && (
                     <div className="flex items-center gap-2">
                       <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm">已驳回</span>
                       <button
@@ -637,7 +660,7 @@ Zhang San`,
                       </button>
                     </div>
                   )}
-                  {needsApproval && approvalStatus === 'approved' && (
+                  {needsApproval && currentApprovalStatus === 'approved' && (
                     <button
                       onClick={handleFinalSend}
                       disabled={!canSend()}
@@ -657,7 +680,7 @@ Zhang San`,
                       发送
                     </button>
                   )}
-                  {needsApproval && approvalStatus === 'pending' && (
+                  {needsApproval && currentApprovalStatus === 'pending' && (
                     <button
                       disabled
                       className="px-4 py-2 bg-gray-100 text-gray-400 rounded-lg cursor-not-allowed flex items-center gap-2"

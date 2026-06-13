@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Header } from '@/components/Header';
 import { useMailStore } from '@/store/mailStore';
 import { Task, TaskStatus } from '@/types';
 import { ClipboardList, Clock, Calendar, CheckCircle, PlayCircle, PauseCircle, Trash2, Plus, X, AlertCircle, Mail, ArrowRight } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 const statusOptions: { value: TaskStatus; label: string; icon: typeof CheckCircle; color: string }[] = [
   { value: 'pending', label: '待跟进', icon: Clock, color: 'bg-amber-100 text-amber-700' },
@@ -11,15 +11,28 @@ const statusOptions: { value: TaskStatus; label: string; icon: typeof CheckCircl
   { value: 'completed', label: '已完成', icon: CheckCircle, color: 'bg-green-100 text-green-700' },
 ];
 
-type ViewMode = 'all' | 'today';
+type ViewMode = 'all' | 'today' | 'overdue' | 'completed_today';
+type TaskSubView = 'list' | 'overdue_list' | 'completed_list' | null;
 
 export function TasksPage() {
   const { tasks, updateTaskStatus, addTask, updateTaskDeadline, setSelectedEmail, getEmailById } = useMailStore();
+  const navigate = useNavigate();
+  const location = useLocation();
+  
   const [statusFilter, setStatusFilter] = useState<TaskStatus | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('all');
+  const [taskSubView, setTaskSubView] = useState<TaskSubView>(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [newTask, setNewTask] = useState({ title: '', description: '', deadline: '' });
-  const navigate = useNavigate();
+  const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const selectedTaskId = location.state?.selectedTaskId;
+    if (selectedTaskId) {
+      setHighlightedTaskId(selectedTaskId);
+      setTimeout(() => setHighlightedTaskId(null), 3000);
+    }
+  }, [location.state]);
 
   const today = useMemo(() => {
     const date = new Date();
@@ -27,51 +40,43 @@ export function TasksPage() {
     return date.toISOString().slice(0, 10);
   }, []);
 
-  const tomorrow = useMemo(() => {
-    const date = new Date();
-    date.setDate(date.getDate() + 1);
-    date.setHours(0, 0, 0, 0);
-    return date.toISOString().slice(0, 10);
-  }, []);
+  const todayStart = useMemo(() => {
+    const date = new Date(today);
+    return date;
+  }, [today]);
 
-  const nextWeek = useMemo(() => {
-    const date = new Date();
-    date.setDate(date.getDate() + 7);
-    return date.toISOString().slice(0, 10);
-  }, []);
+  const todayEnd = useMemo(() => {
+    const date = new Date(today);
+    date.setHours(23, 59, 59, 999);
+    return date;
+  }, [today]);
 
-  const taskStats = useMemo(() => {
-    const todayStart = new Date(today);
-    const todayEnd = new Date(today);
-    todayEnd.setHours(23, 59, 59, 999);
-
-    const overdue = tasks.filter(t => {
+  const overdueTasks = useMemo(() => {
+    return tasks.filter(t => {
       const deadline = new Date(t.deadline);
       return deadline < todayStart && t.status !== 'completed';
-    });
+    }).sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+  }, [tasks, todayStart]);
 
-    const todayTasks = tasks.filter(t => {
+  const todayTasks = useMemo(() => {
+    return tasks.filter(t => {
       const deadline = new Date(t.deadline);
-      return deadline >= todayStart && deadline <= todayEnd;
-    });
+      return deadline >= todayStart && deadline <= todayEnd && t.status !== 'completed';
+    }).sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+  }, [tasks, todayStart, todayEnd]);
 
-    const completedToday = tasks.filter(t => {
+  const completedTodayTasks = useMemo(() => {
+    return tasks.filter(t => {
       if (!t.completedAt) return false;
       const completed = new Date(t.completedAt);
       return completed >= todayStart && completed <= todayEnd;
-    });
-
-    return { overdue, todayTasks, completedToday };
-  }, [tasks, today]);
+    }).sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime());
+  }, [tasks, todayStart, todayEnd]);
 
   const filteredTasks = useMemo(() => {
     let filtered = [...tasks];
     
     if (viewMode === 'today') {
-      const todayStart = new Date(today);
-      const todayEnd = new Date(today);
-      todayEnd.setHours(23, 59, 59, 999);
-
       filtered = filtered.filter(t => {
         const deadline = new Date(t.deadline);
         return deadline >= todayStart && deadline <= todayEnd && t.status !== 'completed';
@@ -83,7 +88,7 @@ export function TasksPage() {
     }
     
     return filtered.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
-  }, [tasks, statusFilter, viewMode, today]);
+  }, [tasks, statusFilter, viewMode, todayStart, todayEnd]);
 
   const formatDeadline = (dateString: string) => {
     const date = new Date(dateString);
@@ -97,7 +102,6 @@ export function TasksPage() {
 
   const isOverdue = (deadline: string, status: TaskStatus) => {
     const deadlineDate = new Date(deadline);
-    const todayStart = new Date(today);
     return deadlineDate < todayStart && status !== 'completed';
   };
 
@@ -136,6 +140,126 @@ export function TasksPage() {
       setSelectedEmail(emailId);
       navigate('/');
     }
+  };
+
+  const renderTaskCard = (task: Task) => {
+    const StatusIcon = statusOptions.find(s => s.value === task.status)?.icon || Clock;
+    const statusColor = statusOptions.find(s => s.value === task.status)?.color || 'bg-gray-100 text-gray-600';
+    const overdue = isOverdue(task.deadline, task.status);
+    const today = isToday(task.deadline);
+    const isHighlighted = highlightedTaskId === task.id;
+
+    return (
+      <div
+        key={task.id}
+        id={`task-${task.id}`}
+        className={`bg-white rounded-xl shadow-sm border border-gray-100 p-5 transition-all duration-200 hover:shadow-md ${
+          overdue ? 'border-l-4 border-red-500' : today ? 'border-l-4 border-amber-500' : ''
+        } ${isHighlighted ? 'ring-4 ring-blue-500 bg-blue-50' : ''}`}
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <h4 className="font-medium text-gray-900">{task.title}</h4>
+              {overdue && (
+                <span className="flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">
+                  <AlertCircle className="w-3 h-3" />
+                  已逾期
+                </span>
+              )}
+              {today && !overdue && (
+                <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs">
+                  <Clock className="w-3 h-3" />
+                  今日
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 mb-4">{task.description}</p>
+            <div className="flex items-center gap-6 text-sm">
+              <span className="flex items-center gap-2 text-gray-500">
+                <Calendar className="w-4 h-4" />
+                截止: {formatDeadline(task.deadline)}
+              </span>
+              {task.emailId && task.emailId !== 'email-new' && (
+                <button
+                  onClick={() => handleViewEmail(task.emailId)}
+                  className="flex items-center gap-1 text-blue-600 hover:text-blue-800"
+                >
+                  <Mail className="w-4 h-4" />
+                  查看关联邮件
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 ml-4">
+            {task.status !== 'completed' && (
+              <>
+                <button
+                  onClick={() => updateTaskStatus(task.id, 'completed')}
+                  className="p-2 text-green-500 hover:bg-green-50 rounded-lg transition-colors"
+                  title="标记完成"
+                >
+                  <CheckCircle className="w-5 h-5" />
+                </button>
+                {task.status === 'pending' && (
+                  <button
+                    onClick={() => updateTaskStatus(task.id, 'in_progress')}
+                    className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                    title="开始处理"
+                  >
+                    <PlayCircle className="w-5 h-5" />
+                  </button>
+                )}
+                {task.status === 'in_progress' && (
+                  <button
+                    onClick={() => updateTaskStatus(task.id, 'pending')}
+                    className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-colors"
+                    title="暂停处理"
+                  >
+                    <PauseCircle className="w-5 h-5" />
+                  </button>
+                )}
+              </>
+            )}
+            {task.status !== 'completed' && (
+              <div className="relative group">
+                <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                  <ArrowRight className="w-5 h-5" />
+                </button>
+                <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-100 py-2 hidden group-hover:block z-10 min-w-[140px]">
+                  <button
+                    onClick={() => handleExtendDeadline(task.id, 1)}
+                    className="w-full px-4 py-2 text-sm text-left hover:bg-gray-50"
+                  >
+                    延期到明天
+                  </button>
+                  <button
+                    onClick={() => handleExtendDeadline(task.id, 7)}
+                    className="w-full px-4 py-2 text-sm text-left hover:bg-gray-50"
+                  >
+                    延期到下周
+                  </button>
+                </div>
+              </div>
+            )}
+            <button className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+              <Trash2 className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-100">
+          <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${statusColor}`}>
+            <StatusIcon className="w-4 h-4" />
+            {statusOptions.find(s => s.value === task.status)?.label}
+          </div>
+          <span className="text-xs text-gray-400">
+            创建于 {new Date(task.createdAt).toLocaleDateString('zh-CN')}
+          </span>
+        </div>
+      </div>
+    );
   };
 
   const pendingCount = tasks.filter(t => t.status === 'pending').length;
@@ -187,7 +311,7 @@ export function TasksPage() {
 
               <div className="space-y-2 mb-6">
                 <button
-                  onClick={() => setViewMode('all')}
+                  onClick={() => { setViewMode('all'); setTaskSubView(null); }}
                   className={`w-full p-3 rounded-lg text-left transition-all duration-200 ${
                     viewMode === 'all' ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
                   }`}
@@ -195,63 +319,57 @@ export function TasksPage() {
                   <div className="flex items-center gap-3">
                     <ClipboardList className="w-5 h-5" />
                     <span>全部任务</span>
+                    <span className="ml-auto text-sm opacity-60">{tasks.length}</span>
                   </div>
                 </button>
                 <button
-                  onClick={() => setViewMode('today')}
+                  onClick={() => { setViewMode('today'); setTaskSubView('list'); }}
                   className={`w-full p-3 rounded-lg text-left transition-all duration-200 ${
-                    viewMode === 'today' ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
+                    viewMode === 'today' && taskSubView === 'list' ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     <Clock className="w-5 h-5" />
                     <span>今日提醒</span>
-                    {taskStats.todayTasks.length > 0 && (
+                    {todayTasks.length > 0 && (
                       <span className="ml-auto px-2 py-0.5 bg-blue-500 text-white text-xs rounded-full">
-                        {taskStats.todayTasks.length}
+                        {todayTasks.length}
                       </span>
                     )}
                   </div>
                 </button>
               </div>
 
-              {viewMode === 'today' && (
-                <div className="space-y-3">
-                  <div className="bg-red-50 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-red-700 mb-2">
-                      <AlertCircle className="w-4 h-4" />
-                      <span className="text-sm font-medium">已逾期</span>
-                      <span className="ml-auto text-xs">{taskStats.overdue.length}</span>
-                    </div>
-                    {taskStats.overdue.slice(0, 2).map(task => (
-                      <div key={task.id} className="text-sm text-red-600 truncate">
-                        {task.title}
-                      </div>
-                    ))}
+              <div className="space-y-3">
+                <button
+                  onClick={() => { setViewMode('overdue'); setTaskSubView('overdue_list'); }}
+                  className={`w-full rounded-lg p-3 transition-all duration-200 ${
+                    taskSubView === 'overdue_list' ? 'bg-red-50 border-2 border-red-500' : 'bg-red-50 hover:bg-red-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 text-red-700 mb-2">
+                    <AlertCircle className="w-4 h-4" />
+                    <span className="text-sm font-medium">已逾期</span>
+                    <span className="ml-auto text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded-full">{overdueTasks.length}</span>
                   </div>
+                  {overdueTasks.length > 0 && (
+                    <p className="text-xs text-red-600 truncate">{overdueTasks[0]?.title}</p>
+                  )}
+                </button>
 
-                  <div className="bg-amber-50 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-amber-700 mb-2">
-                      <Clock className="w-4 h-4" />
-                      <span className="text-sm font-medium">今日待办</span>
-                      <span className="ml-auto text-xs">{taskStats.todayTasks.length}</span>
-                    </div>
-                    {taskStats.todayTasks.slice(0, 2).map(task => (
-                      <div key={task.id} className="text-sm text-amber-600 truncate">
-                        {task.title}
-                      </div>
-                    ))}
+                <button
+                  onClick={() => { setViewMode('completed_today'); setTaskSubView('completed_list'); }}
+                  className={`w-full rounded-lg p-3 transition-all duration-200 ${
+                    taskSubView === 'completed_list' ? 'bg-green-50 border-2 border-green-500' : 'bg-green-50 hover:bg-green-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 text-green-700 mb-2">
+                    <CheckCircle className="w-4 h-4" />
+                    <span className="text-sm font-medium">今日完成</span>
+                    <span className="ml-auto text-xs bg-green-200 text-green-800 px-2 py-0.5 rounded-full">{completedTodayTasks.length}</span>
                   </div>
-
-                  <div className="bg-green-50 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-green-700 mb-2">
-                      <CheckCircle className="w-4 h-4" />
-                      <span className="text-sm font-medium">今日完成</span>
-                      <span className="ml-auto text-xs">{taskStats.completedToday.length}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
+                </button>
+              </div>
 
               <div className="mt-6">
                 <p className="font-medium text-gray-900 mb-4">任务状态</p>
@@ -290,141 +408,44 @@ export function TasksPage() {
               <div className="flex items-center justify-between">
                 <h3 className="font-medium text-gray-900 flex items-center gap-2">
                   <ClipboardList className="w-5 h-5 text-blue-500" />
-                  {viewMode === 'today' ? '今日提醒' : '任务列表'}
+                  {taskSubView === 'overdue_list' ? '已逾期任务' : 
+                   taskSubView === 'completed_list' ? '今日已完成' :
+                   viewMode === 'today' ? '今日提醒' : '任务列表'}
                 </h3>
-                <span className="text-sm text-gray-500">{filteredTasks.length} 个任务</span>
+                <span className="text-sm text-gray-500">
+                  {taskSubView === 'overdue_list' ? overdueTasks.length :
+                   taskSubView === 'completed_list' ? completedTodayTasks.length :
+                   viewMode === 'today' ? todayTasks.length :
+                   filteredTasks.length} 个任务
+                </span>
               </div>
             </div>
 
             <div className="space-y-4">
-              {filteredTasks.map((task) => {
-                const StatusIcon = statusOptions.find(s => s.value === task.status)?.icon || Clock;
-                const statusColor = statusOptions.find(s => s.value === task.status)?.color || 'bg-gray-100 text-gray-600';
-                const overdue = isOverdue(task.deadline, task.status);
-                const today = isToday(task.deadline);
+              {taskSubView === 'overdue_list' && overdueTasks.map(task => renderTaskCard(task))}
+              {taskSubView === 'completed_list' && completedTodayTasks.map(task => renderTaskCard(task))}
+              {taskSubView === 'list' && todayTasks.map(task => renderTaskCard(task))}
+              {!taskSubView && filteredTasks.map(task => renderTaskCard(task))}
 
-                return (
-                  <div
-                    key={task.id}
-                    className={`bg-white rounded-xl shadow-sm border border-gray-100 p-5 transition-all duration-200 hover:shadow-md ${
-                      overdue ? 'border-l-4 border-red-500' : today ? 'border-l-4 border-amber-500' : ''
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h4 className="font-medium text-gray-900">{task.title}</h4>
-                          {overdue && (
-                            <span className="flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">
-                              <AlertCircle className="w-3 h-3" />
-                              已逾期
-                            </span>
-                          )}
-                          {today && !overdue && (
-                            <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs">
-                              <Clock className="w-3 h-3" />
-                              今日
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm text-gray-500 mb-4">{task.description}</p>
-                        <div className="flex items-center gap-6 text-sm">
-                          <span className="flex items-center gap-2 text-gray-500">
-                            <Calendar className="w-4 h-4" />
-                            截止: {formatDeadline(task.deadline)}
-                          </span>
-                          {task.emailId && task.emailId !== 'email-new' && (
-                            <button
-                              onClick={() => handleViewEmail(task.emailId)}
-                              className="flex items-center gap-1 text-blue-600 hover:text-blue-800"
-                            >
-                              <Mail className="w-4 h-4" />
-                              查看关联邮件
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 ml-4">
-                        {task.status !== 'completed' && (
-                          <>
-                            <button
-                              onClick={() => updateTaskStatus(task.id, 'completed')}
-                              className="p-2 text-green-500 hover:bg-green-50 rounded-lg transition-colors"
-                              title="标记完成"
-                            >
-                              <CheckCircle className="w-5 h-5" />
-                            </button>
-                            {task.status === 'pending' && (
-                              <button
-                                onClick={() => updateTaskStatus(task.id, 'in_progress')}
-                                className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
-                                title="开始处理"
-                              >
-                                <PlayCircle className="w-5 h-5" />
-                              </button>
-                            )}
-                            {task.status === 'in_progress' && (
-                              <button
-                                onClick={() => updateTaskStatus(task.id, 'pending')}
-                                className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-colors"
-                                title="暂停处理"
-                              >
-                                <PauseCircle className="w-5 h-5" />
-                              </button>
-                            )}
-                          </>
-                        )}
-                        {task.status !== 'completed' && (
-                          <div className="relative group">
-                            <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                              <ArrowRight className="w-5 h-5" />
-                            </button>
-                            <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-100 py-2 hidden group-hover:block z-10 min-w-[140px]">
-                              <button
-                                onClick={() => handleExtendDeadline(task.id, 1)}
-                                className="w-full px-4 py-2 text-sm text-left hover:bg-gray-50"
-                              >
-                                延期到明天
-                              </button>
-                              <button
-                                onClick={() => handleExtendDeadline(task.id, 7)}
-                                className="w-full px-4 py-2 text-sm text-left hover:bg-gray-50"
-                              >
-                                延期到下周
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        <button className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-100">
-                      <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${statusColor}`}>
-                        <StatusIcon className="w-4 h-4" />
-                        {statusOptions.find(s => s.value === task.status)?.label}
-                      </div>
-                      <span className="text-xs text-gray-400">
-                        创建于 {new Date(task.createdAt).toLocaleDateString('zh-CN')}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {filteredTasks.length === 0 && (
+              {((taskSubView === 'overdue_list' && overdueTasks.length === 0) ||
+                (taskSubView === 'completed_list' && completedTodayTasks.length === 0) ||
+                (taskSubView === 'list' && todayTasks.length === 0) ||
+                (!taskSubView && filteredTasks.length === 0)) && (
                 <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
                   <ClipboardList className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-500">{viewMode === 'today' ? '今日暂无待处理任务' : '暂无任务'}</p>
-                  <button
-                    onClick={() => setShowAddTask(true)}
-                    className="btn-primary mt-4"
-                  >
-                    创建第一个任务
-                  </button>
+                  <p className="text-gray-500">
+                    {taskSubView === 'overdue_list' ? '暂无逾期任务' :
+                     taskSubView === 'completed_list' ? '今日暂无完成的任务' :
+                     viewMode === 'today' ? '今日暂无待处理任务' : '暂无任务'}
+                  </p>
+                  {viewMode === 'all' && (
+                    <button
+                      onClick={() => setShowAddTask(true)}
+                      className="btn-primary mt-4"
+                    >
+                      创建第一个任务
+                    </button>
+                  )}
                 </div>
               )}
             </div>
