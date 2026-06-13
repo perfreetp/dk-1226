@@ -8,7 +8,7 @@ import { Email, EmailStatus, EmailIntent } from '@/types';
 import { Mail, AlertCircle, Clock } from 'lucide-react';
 
 export function InboxPage() {
-  const { emails, setSelectedEmail, selectedEmailId, getEmailById, updateEmailStatus } = useMailStore();
+  const { emails, setSelectedEmail, selectedEmailId, getEmailById, updateEmailStatus, updateEmailApprovalStatus } = useMailStore();
   const [statusFilter, setStatusFilter] = useState<EmailStatus | null>(null);
   const [intentFilter, setIntentFilter] = useState<EmailIntent | null>(null);
   const [selectedEmail, setSelectedEmailLocal] = useState<Email | null>(null);
@@ -39,6 +39,8 @@ export function InboxPage() {
 
   const unreadCount = emails.filter(e => e.status === 'unread').length;
   const pendingCount = emails.filter(e => e.status === 'pending').length;
+  const pendingApprovalCount = emails.filter(e => e.approvalStatus === 'pending').length;
+  const rejectedCount = emails.filter(e => e.approvalStatus === 'rejected').length;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -69,6 +71,32 @@ export function InboxPage() {
                     <p className="text-xs text-gray-500">待跟进</p>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6">
+              <h3 className="font-medium text-gray-900 mb-3">审批状态</h3>
+              <div className="space-y-2">
+                <button
+                  onClick={() => {}}
+                  className="w-full flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-amber-500"></div>
+                    <span className="text-sm">待审批</span>
+                  </div>
+                  <span className="text-sm font-medium text-gray-600">{pendingApprovalCount}</span>
+                </button>
+                <button
+                  onClick={() => {}}
+                  className="w-full flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                    <span className="text-sm">已驳回</span>
+                  </div>
+                  <span className="text-sm font-medium text-gray-600">{rejectedCount}</span>
+                </button>
               </div>
             </div>
 

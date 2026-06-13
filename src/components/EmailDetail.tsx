@@ -1,4 +1,4 @@
-import { Mail, User, Building2, Phone, MailIcon, Calendar, DollarSign, Package, Tag, Clock, Send, FileEdit, CheckCircle } from 'lucide-react';
+import { Mail, User, Building2, Phone, MailIcon, Calendar, DollarSign, Package, Tag, Clock, Send, FileEdit, CheckCircle, ChevronRight, AlertTriangle, History } from 'lucide-react';
 import { Email, EmailIntent } from '@/types';
 import { useMailStore } from '@/store/mailStore';
 import { useNavigate } from 'react-router-dom';
@@ -16,14 +16,24 @@ const intentColors: Record<EmailIntent, string> = {
   其他: 'bg-gray-100 text-gray-600',
 };
 
+const approvalStatusConfig = {
+  none: { label: '无需审批', color: 'bg-gray-100 text-gray-600', icon: null },
+  pending: { label: '审批中', color: 'bg-amber-100 text-amber-700', icon: Clock },
+  approved: { label: '已通过', color: 'bg-green-100 text-green-700', icon: CheckCircle },
+  rejected: { label: '已驳回', color: 'bg-red-100 text-red-700', icon: AlertTriangle },
+};
+
 export function EmailDetail({ email }: EmailDetailProps) {
-  const { getContactById, updateEmailStatus, addTask, setSelectedContact } = useMailStore();
+  const { getContactById, updateEmailStatus, addTask, setSelectedContact, getTasksForEmail } = useMailStore();
   const navigate = useNavigate();
   const [showAddTask, setShowAddTask] = useState(false);
+  const [showApprovalHistory, setShowApprovalHistory] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDeadline, setTaskDeadline] = useState('');
 
   const contact = getContactById(email.contactId);
+  const relatedTasks = getTasksForEmail(email.id);
+  const approvalConfig = approvalStatusConfig[email.approvalStatus];
 
   if (!contact) return null;
 
@@ -37,7 +47,6 @@ export function EmailDetail({ email }: EmailDetailProps) {
   const handleMarkAsRead = () => {
     if (email.status === 'unread') {
       updateEmailStatus(email.id, 'read');
-      localStorage.setItem(`email_${email.id}_status`, 'read');
     }
   };
 
@@ -75,6 +84,20 @@ export function EmailDetail({ email }: EmailDetailProps) {
     navigate('/contacts');
   };
 
+  const handleViewEmail = (emailId: string) => {
+    navigate('/');
+    setTimeout(() => {
+      const emailEl = document.querySelector(`[data-email-id="${emailId}"]`);
+      if (emailEl) {
+        emailEl.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
+  };
+
+  const handleViewTask = (taskId: string) => {
+    navigate('/tasks', { state: { selectedTaskId: taskId } });
+  };
+
   const entities = email.entities;
 
   return (
@@ -82,9 +105,17 @@ export function EmailDetail({ email }: EmailDetailProps) {
       <div className="p-6 border-b border-gray-100">
         <div className="flex items-start justify-between mb-4">
           <h2 className="text-xl font-bold text-gray-900">{email.subject}</h2>
-          <span className={`px-3 py-1 text-sm font-medium rounded-full ${intentColors[email.intent]}`}>
-            {email.intent} ({Math.round(email.confidence * 100)}%)
-          </span>
+          <div className="flex items-center gap-2">
+            <span className={`px-3 py-1 text-sm font-medium rounded-full ${intentColors[email.intent]}`}>
+              {email.intent} ({Math.round(email.confidence * 100)}%)
+            </span>
+            {email.approvalStatus !== 'none' && (
+              <span className={`px-3 py-1 text-sm font-medium rounded-full flex items-center gap-1 ${approvalConfig.color}`}>
+                {approvalConfig.icon && <approvalConfig.icon className="w-4 h-4" />}
+                {approvalConfig.label}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-4">
@@ -132,6 +163,90 @@ export function EmailDetail({ email }: EmailDetailProps) {
           )}
         </div>
       </div>
+
+      {email.approvalHistory.length > 0 && (
+        <div className="p-4 border-b border-gray-100 bg-gray-50">
+          <button
+            onClick={() => setShowApprovalHistory(!showApprovalHistory)}
+            className="flex items-center justify-between w-full text-left"
+          >
+            <div className="flex items-center gap-2 text-gray-700">
+              <History className="w-4 h-4" />
+              <span className="font-medium">审批记录</span>
+              <span className="text-sm text-gray-500">共 {email.approvalHistory.length} 条</span>
+            </div>
+            <ChevronRight className={`w-5 h-5 text-gray-400 transition-transform ${showApprovalHistory ? 'rotate-90' : ''}`} />
+          </button>
+
+          {showApprovalHistory && (
+            <div className="mt-4 space-y-3">
+              {email.approvalHistory.map((record, index) => (
+                <div key={record.id} className="bg-white rounded-lg p-4 border border-gray-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                        record.status === 'approved' ? 'bg-green-100 text-green-700' :
+                        record.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                        'bg-amber-100 text-amber-700'
+                      }`}>
+                        {record.status === 'approved' ? '已通过' : record.status === 'rejected' ? '已驳回' : '待审批'}
+                      </span>
+                      <span className="text-sm text-gray-500">
+                        第 {email.approvalHistory.length - index} 轮
+                      </span>
+                    </div>
+                    <span className="text-xs text-gray-400">
+                      {new Date(record.submittedAt).toLocaleString('zh-CN')}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p>提交人: {record.submitterName}</p>
+                    {record.reviewerName && <p>审批人: {record.reviewerName}</p>}
+                    {record.reviewedAt && <p>审批时间: {new Date(record.reviewedAt).toLocaleString('zh-CN')}</p>}
+                    {record.rejectReason && (
+                      <p className="text-red-600">驳回原因: {record.rejectReason}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {relatedTasks.length > 0 && (
+        <div className="p-4 border-b border-gray-100 bg-gray-50">
+          <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+            <Tag className="w-4 h-4 text-blue-500" />
+            关联跟进任务 ({relatedTasks.length})
+          </h3>
+          <div className="space-y-2">
+            {relatedTasks.map((task) => (
+              <div
+                key={task.id}
+                onClick={() => handleViewTask(task.id)}
+                className="bg-white rounded-lg p-3 border border-gray-100 cursor-pointer hover:shadow-md transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                      task.status === 'completed' ? 'bg-green-100 text-green-700' :
+                      task.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                      'bg-amber-100 text-amber-700'
+                    }`}>
+                      {task.status === 'completed' ? '已完成' : task.status === 'in_progress' ? '进行中' : '待跟进'}
+                    </span>
+                    <span className="text-sm font-medium text-gray-900">{task.title}</span>
+                  </div>
+                  <span className="text-xs text-gray-400">
+                    {new Date(task.deadline).toLocaleDateString('zh-CN')}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {Object.keys(entities).some(key => entities[key as keyof typeof entities] !== null) && (
         <div className="p-6 border-b border-gray-100 bg-gray-50">

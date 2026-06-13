@@ -2,6 +2,7 @@ export type EmailIntent = '咨询' | '投诉' | '报价' | '催办' | '其他';
 export type EmailStatus = 'unread' | 'read' | 'replied' | 'pending';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';
 export type ToneType = 'formal' | 'friendly' | 'urgent' | 'professional';
+export type ApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected';
 
 export interface EmailEntities {
   customerName: string | null;
@@ -9,6 +10,20 @@ export interface EmailEntities {
   amount: number | null;
   deadline: string | null;
   contactInfo: string | null;
+}
+
+export interface ApprovalRecord {
+  id: string;
+  emailId: string;
+  submitterId: string;
+  submitterName: string;
+  status: ApprovalStatus;
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewerId?: string;
+  reviewerName?: string;
+  rejectReason?: string;
+  content?: string;
 }
 
 export interface Email {
@@ -21,6 +36,8 @@ export interface Email {
   confidence: number;
   entities: EmailEntities;
   status: EmailStatus;
+  approvalStatus: ApprovalStatus;
+  approvalHistory: ApprovalRecord[];
   receivedAt: string;
   repliedAt?: string;
   createdAt: string;

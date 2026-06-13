@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Header } from '@/components/Header';
 import { useMailStore } from '@/store/mailStore';
 import { Task, TaskStatus } from '@/types';
-import { ClipboardList, Clock, Calendar, CheckCircle, PlayCircle, PauseCircle, Trash2, Plus, X, AlertCircle } from 'lucide-react';
+import { ClipboardList, Clock, Calendar, CheckCircle, PlayCircle, PauseCircle, Trash2, Plus, X, AlertCircle, Mail, ArrowRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const statusOptions: { value: TaskStatus; label: string; icon: typeof CheckCircle; color: string }[] = [
   { value: 'pending', label: '待跟进', icon: Clock, color: 'bg-amber-100 text-amber-700' },
@@ -10,16 +11,79 @@ const statusOptions: { value: TaskStatus; label: string; icon: typeof CheckCircl
   { value: 'completed', label: '已完成', icon: CheckCircle, color: 'bg-green-100 text-green-700' },
 ];
 
+type ViewMode = 'all' | 'today';
+
 export function TasksPage() {
-  const { tasks, updateTaskStatus, addTask } = useMailStore();
+  const { tasks, updateTaskStatus, addTask, updateTaskDeadline, setSelectedEmail, getEmailById } = useMailStore();
   const [statusFilter, setStatusFilter] = useState<TaskStatus | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>('all');
   const [showAddTask, setShowAddTask] = useState(false);
   const [newTask, setNewTask] = useState({ title: '', description: '', deadline: '' });
+  const navigate = useNavigate();
 
-  const filteredTasks = tasks.filter(task => {
-    if (statusFilter && task.status !== statusFilter) return false;
-    return true;
-  });
+  const today = useMemo(() => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    return date.toISOString().slice(0, 10);
+  }, []);
+
+  const tomorrow = useMemo(() => {
+    const date = new Date();
+    date.setDate(date.getDate() + 1);
+    date.setHours(0, 0, 0, 0);
+    return date.toISOString().slice(0, 10);
+  }, []);
+
+  const nextWeek = useMemo(() => {
+    const date = new Date();
+    date.setDate(date.getDate() + 7);
+    return date.toISOString().slice(0, 10);
+  }, []);
+
+  const taskStats = useMemo(() => {
+    const todayStart = new Date(today);
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const overdue = tasks.filter(t => {
+      const deadline = new Date(t.deadline);
+      return deadline < todayStart && t.status !== 'completed';
+    });
+
+    const todayTasks = tasks.filter(t => {
+      const deadline = new Date(t.deadline);
+      return deadline >= todayStart && deadline <= todayEnd;
+    });
+
+    const completedToday = tasks.filter(t => {
+      if (!t.completedAt) return false;
+      const completed = new Date(t.completedAt);
+      return completed >= todayStart && completed <= todayEnd;
+    });
+
+    return { overdue, todayTasks, completedToday };
+  }, [tasks, today]);
+
+  const filteredTasks = useMemo(() => {
+    let filtered = [...tasks];
+    
+    if (viewMode === 'today') {
+      const todayStart = new Date(today);
+      const todayEnd = new Date(today);
+      todayEnd.setHours(23, 59, 59, 999);
+
+      filtered = filtered.filter(t => {
+        const deadline = new Date(t.deadline);
+        return deadline >= todayStart && deadline <= todayEnd && t.status !== 'completed';
+      });
+    }
+    
+    if (statusFilter) {
+      filtered = filtered.filter(t => t.status === statusFilter);
+    }
+    
+    return filtered.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+  }, [tasks, statusFilter, viewMode, today]);
 
   const formatDeadline = (dateString: string) => {
     const date = new Date(dateString);
@@ -31,24 +95,46 @@ export function TasksPage() {
     });
   };
 
-  const isOverdue = (deadline: string) => {
-    return new Date(deadline) < new Date();
+  const isOverdue = (deadline: string, status: TaskStatus) => {
+    const deadlineDate = new Date(deadline);
+    const todayStart = new Date(today);
+    return deadlineDate < todayStart && status !== 'completed';
+  };
+
+  const isToday = (deadline: string) => {
+    return deadline.slice(0, 10) === today;
   };
 
   const handleAddTask = () => {
     if (newTask.title.trim()) {
       addTask({
         userId: 'user-1',
-        emailId: 'email-1',
+        emailId: 'email-new',
         title: newTask.title,
         description: newTask.description,
         status: 'pending',
         deadline: newTask.deadline || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        reminderAt: new Date().toISOString(),
+        reminderAt: newTask.deadline || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         createdAt: new Date().toISOString(),
       });
       setNewTask({ title: '', description: '', deadline: '' });
       setShowAddTask(false);
+    }
+  };
+
+  const handleExtendDeadline = (taskId: string, days: number) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (task) {
+      const newDeadline = new Date(task.deadline);
+      newDeadline.setDate(newDeadline.getDate() + days);
+      updateTaskDeadline(taskId, newDeadline.toISOString());
+    }
+  };
+
+  const handleViewEmail = (emailId: string) => {
+    if (emailId && emailId !== 'email-new') {
+      setSelectedEmail(emailId);
+      navigate('/');
     }
   };
 
@@ -87,9 +173,9 @@ export function TasksPage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6">
               <div className="flex items-center justify-between mb-4">
-                <span className="font-medium text-gray-900">任务状态</span>
+                <span className="font-medium text-gray-900">视图切换</span>
                 <button
                   onClick={() => setShowAddTask(true)}
                   className="btn-primary text-sm flex items-center gap-1"
@@ -99,31 +185,102 @@ export function TasksPage() {
                 </button>
               </div>
 
-              <div className="space-y-2">
-                {statusOptions.map((option) => {
-                  const Icon = option.icon;
-                  const isActive = statusFilter === option.value;
-                  const count = tasks.filter(t => t.status === option.value).length;
-                  return (
-                    <button
-                      key={option.value}
-                      onClick={() => setStatusFilter(isActive ? null : option.value)}
-                      className={`w-full flex items-center justify-between p-3 rounded-lg transition-all duration-200 ${
-                        isActive ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${option.color}`}>
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        <span>{option.label}</span>
-                      </div>
-                      <span className={`text-sm px-2 py-1 rounded-full ${isActive ? 'bg-blue-100' : 'bg-gray-100'}`}>
-                        {count}
+              <div className="space-y-2 mb-6">
+                <button
+                  onClick={() => setViewMode('all')}
+                  className={`w-full p-3 rounded-lg text-left transition-all duration-200 ${
+                    viewMode === 'all' ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <ClipboardList className="w-5 h-5" />
+                    <span>全部任务</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setViewMode('today')}
+                  className={`w-full p-3 rounded-lg text-left transition-all duration-200 ${
+                    viewMode === 'today' ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Clock className="w-5 h-5" />
+                    <span>今日提醒</span>
+                    {taskStats.todayTasks.length > 0 && (
+                      <span className="ml-auto px-2 py-0.5 bg-blue-500 text-white text-xs rounded-full">
+                        {taskStats.todayTasks.length}
                       </span>
-                    </button>
-                  );
-                })}
+                    )}
+                  </div>
+                </button>
+              </div>
+
+              {viewMode === 'today' && (
+                <div className="space-y-3">
+                  <div className="bg-red-50 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-red-700 mb-2">
+                      <AlertCircle className="w-4 h-4" />
+                      <span className="text-sm font-medium">已逾期</span>
+                      <span className="ml-auto text-xs">{taskStats.overdue.length}</span>
+                    </div>
+                    {taskStats.overdue.slice(0, 2).map(task => (
+                      <div key={task.id} className="text-sm text-red-600 truncate">
+                        {task.title}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="bg-amber-50 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-amber-700 mb-2">
+                      <Clock className="w-4 h-4" />
+                      <span className="text-sm font-medium">今日待办</span>
+                      <span className="ml-auto text-xs">{taskStats.todayTasks.length}</span>
+                    </div>
+                    {taskStats.todayTasks.slice(0, 2).map(task => (
+                      <div key={task.id} className="text-sm text-amber-600 truncate">
+                        {task.title}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-green-700 mb-2">
+                      <CheckCircle className="w-4 h-4" />
+                      <span className="text-sm font-medium">今日完成</span>
+                      <span className="ml-auto text-xs">{taskStats.completedToday.length}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-6">
+                <p className="font-medium text-gray-900 mb-4">任务状态</p>
+                <div className="space-y-2">
+                  {statusOptions.map((option) => {
+                    const Icon = option.icon;
+                    const isActive = statusFilter === option.value;
+                    const count = tasks.filter(t => t.status === option.value).length;
+                    return (
+                      <button
+                        key={option.value}
+                        onClick={() => setStatusFilter(isActive ? null : option.value)}
+                        className={`w-full flex items-center justify-between p-3 rounded-lg transition-all duration-200 ${
+                          isActive ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${option.color}`}>
+                            <Icon className="w-4 h-4" />
+                          </div>
+                          <span>{option.label}</span>
+                        </div>
+                        <span className={`text-sm px-2 py-1 rounded-full ${isActive ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -133,7 +290,7 @@ export function TasksPage() {
               <div className="flex items-center justify-between">
                 <h3 className="font-medium text-gray-900 flex items-center gap-2">
                   <ClipboardList className="w-5 h-5 text-blue-500" />
-                  任务列表
+                  {viewMode === 'today' ? '今日提醒' : '任务列表'}
                 </h3>
                 <span className="text-sm text-gray-500">{filteredTasks.length} 个任务</span>
               </div>
@@ -143,22 +300,30 @@ export function TasksPage() {
               {filteredTasks.map((task) => {
                 const StatusIcon = statusOptions.find(s => s.value === task.status)?.icon || Clock;
                 const statusColor = statusOptions.find(s => s.value === task.status)?.color || 'bg-gray-100 text-gray-600';
+                const overdue = isOverdue(task.deadline, task.status);
+                const today = isToday(task.deadline);
 
                 return (
                   <div
                     key={task.id}
                     className={`bg-white rounded-xl shadow-sm border border-gray-100 p-5 transition-all duration-200 hover:shadow-md ${
-                      isOverdue(task.deadline) && task.status !== 'completed' ? 'border-l-4 border-red-500' : ''
+                      overdue ? 'border-l-4 border-red-500' : today ? 'border-l-4 border-amber-500' : ''
                     }`}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
                           <h4 className="font-medium text-gray-900">{task.title}</h4>
-                          {isOverdue(task.deadline) && task.status !== 'completed' && (
+                          {overdue && (
                             <span className="flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">
                               <AlertCircle className="w-3 h-3" />
                               已逾期
+                            </span>
+                          )}
+                          {today && !overdue && (
+                            <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs">
+                              <Clock className="w-3 h-3" />
+                              今日
                             </span>
                           )}
                         </div>
@@ -168,36 +333,68 @@ export function TasksPage() {
                             <Calendar className="w-4 h-4" />
                             截止: {formatDeadline(task.deadline)}
                           </span>
+                          {task.emailId && task.emailId !== 'email-new' && (
+                            <button
+                              onClick={() => handleViewEmail(task.emailId)}
+                              className="flex items-center gap-1 text-blue-600 hover:text-blue-800"
+                            >
+                              <Mail className="w-4 h-4" />
+                              查看关联邮件
+                            </button>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2 ml-4">
                         {task.status !== 'completed' && (
-                          <button
-                            onClick={() => updateTaskStatus(task.id, 'completed')}
-                            className="p-2 text-green-500 hover:bg-green-50 rounded-lg transition-colors"
-                            title="标记完成"
-                          >
-                            <CheckCircle className="w-5 h-5" />
-                          </button>
+                          <>
+                            <button
+                              onClick={() => updateTaskStatus(task.id, 'completed')}
+                              className="p-2 text-green-500 hover:bg-green-50 rounded-lg transition-colors"
+                              title="标记完成"
+                            >
+                              <CheckCircle className="w-5 h-5" />
+                            </button>
+                            {task.status === 'pending' && (
+                              <button
+                                onClick={() => updateTaskStatus(task.id, 'in_progress')}
+                                className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="开始处理"
+                              >
+                                <PlayCircle className="w-5 h-5" />
+                              </button>
+                            )}
+                            {task.status === 'in_progress' && (
+                              <button
+                                onClick={() => updateTaskStatus(task.id, 'pending')}
+                                className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-colors"
+                                title="暂停处理"
+                              >
+                                <PauseCircle className="w-5 h-5" />
+                              </button>
+                            )}
+                          </>
                         )}
-                        {task.status === 'pending' && (
-                          <button
-                            onClick={() => updateTaskStatus(task.id, 'in_progress')}
-                            className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="开始处理"
-                          >
-                            <PlayCircle className="w-5 h-5" />
-                          </button>
-                        )}
-                        {task.status === 'in_progress' && (
-                          <button
-                            onClick={() => updateTaskStatus(task.id, 'pending')}
-                            className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-colors"
-                            title="暂停处理"
-                          >
-                            <PauseCircle className="w-5 h-5" />
-                          </button>
+                        {task.status !== 'completed' && (
+                          <div className="relative group">
+                            <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                              <ArrowRight className="w-5 h-5" />
+                            </button>
+                            <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-100 py-2 hidden group-hover:block z-10 min-w-[140px]">
+                              <button
+                                onClick={() => handleExtendDeadline(task.id, 1)}
+                                className="w-full px-4 py-2 text-sm text-left hover:bg-gray-50"
+                              >
+                                延期到明天
+                              </button>
+                              <button
+                                onClick={() => handleExtendDeadline(task.id, 7)}
+                                className="w-full px-4 py-2 text-sm text-left hover:bg-gray-50"
+                              >
+                                延期到下周
+                              </button>
+                            </div>
+                          </div>
                         )}
                         <button className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
                           <Trash2 className="w-5 h-5" />
@@ -221,7 +418,7 @@ export function TasksPage() {
               {filteredTasks.length === 0 && (
                 <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
                   <ClipboardList className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-500">暂无任务</p>
+                  <p className="text-gray-500">{viewMode === 'today' ? '今日暂无待处理任务' : '暂无任务'}</p>
                   <button
                     onClick={() => setShowAddTask(true)}
                     className="btn-primary mt-4"
