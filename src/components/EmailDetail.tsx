@@ -27,6 +27,13 @@ export function EmailDetail({ email }: EmailDetailProps) {
 
   if (!contact) return null;
 
+  const getSuggestedReminderTime = () => {
+    const now = new Date();
+    now.setDate(now.getDate() + 3);
+    now.setHours(10, 0, 0, 0);
+    return now.toISOString().slice(0, 16);
+  };
+
   const handleMarkAsRead = () => {
     if (email.status === 'unread') {
       updateEmailStatus(email.id, 'read');
@@ -38,9 +45,15 @@ export function EmailDetail({ email }: EmailDetailProps) {
     navigate('/compose', { state: { email } });
   };
 
+  const handleShowAddTask = () => {
+    setTaskTitle(`跟进: ${email.subject}`);
+    setTaskDeadline(getSuggestedReminderTime());
+    setShowAddTask(true);
+  };
+
   const handleAddTask = () => {
     if (taskTitle.trim()) {
-      const deadline = taskDeadline || new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+      const deadline = taskDeadline || getSuggestedReminderTime();
       addTask({
         userId: email.userId,
         emailId: email.id,
@@ -63,12 +76,6 @@ export function EmailDetail({ email }: EmailDetailProps) {
   };
 
   const entities = email.entities;
-
-  const getSuggestedReminderTime = () => {
-    const now = new Date();
-    const reminderDate = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-    return reminderDate.toISOString().slice(0, 16);
-  };
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
@@ -189,7 +196,7 @@ export function EmailDetail({ email }: EmailDetailProps) {
             标记已读
           </button>
           <button
-            onClick={() => setShowAddTask(true)}
+            onClick={handleShowAddTask}
             className="btn-secondary flex items-center gap-2"
           >
             <Calendar className="w-4 h-4" />
@@ -216,33 +223,40 @@ export function EmailDetail({ email }: EmailDetailProps) {
 
       {showAddTask && (
         <div className="p-4 border-t border-gray-100 bg-white">
-          <div className="flex gap-4">
-            <input
-              type="text"
-              placeholder="任务标题"
-              value={taskTitle}
-              onChange={(e) => setTaskTitle(e.target.value)}
-              className="flex-1 input-field"
-            />
-            <input
-              type="datetime-local"
-              value={taskDeadline}
-              onChange={(e) => setTaskDeadline(e.target.value)}
-              className="input-field"
-              min={new Date().toISOString().slice(0, 16)}
-            />
+          <div className="flex gap-4 items-end">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">任务标题</label>
+              <input
+                type="text"
+                value={taskTitle}
+                onChange={(e) => setTaskTitle(e.target.value)}
+                className="input-field"
+                placeholder="输入任务标题"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">提醒时间</label>
+              <input
+                type="datetime-local"
+                value={taskDeadline}
+                onChange={(e) => setTaskDeadline(e.target.value)}
+                className="input-field"
+                min={new Date().toISOString().slice(0, 16)}
+              />
+            </div>
             <button onClick={handleAddTask} className="btn-primary">
               添加
             </button>
             <button onClick={() => {
               setShowAddTask(false);
+              setTaskTitle('');
               setTaskDeadline('');
             }} className="btn-secondary">
               取消
             </button>
           </div>
           <p className="text-xs text-gray-500 mt-2">
-            建议提醒时间：{getSuggestedReminderTime().replace('T', ' ')} (3天后)
+            建议提醒时间：{getSuggestedReminderTime().replace('T', ' ')} (3天后上午10:00)
           </p>
         </div>
       )}

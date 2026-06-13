@@ -57,6 +57,13 @@ export function ComposePage() {
     }
   }, [needsApproval]);
 
+  const generateNextFollowUpTime = () => {
+    const now = new Date();
+    now.setDate(now.getDate() + 3);
+    now.setHours(10, 0, 0, 0);
+    return now.toISOString().slice(0, 16);
+  };
+
   const generateChineseContent = (toneType: ToneType): string => {
     const intents: Record<string, string> = {
       '报价': '报价请求',
@@ -306,10 +313,36 @@ Zhang San`,
   };
 
   const handleSend = () => {
-    if (needsApproval) {
-      setShowReminderModal(true);
+    if (needsApproval && approvalStatus !== 'approved') {
+      return;
+    }
+    setShowReminderModal(true);
+    setReminderTime(generateNextFollowUpTime());
+  };
+
+  const createFollowUpTask = (reminderDate: string) => {
+    if (originalEmail) {
+      addTask({
+        userId: originalEmail.userId,
+        emailId: originalEmail.id,
+        title: `跟进: ${subject || originalEmail.subject}`,
+        description: `发送邮件给 ${to}，等待客户回复`,
+        status: 'pending',
+        deadline: reminderDate,
+        reminderAt: reminderDate,
+        createdAt: new Date().toISOString(),
+      });
     } else {
-      completeSend();
+      addTask({
+        userId: 'user-1',
+        emailId: 'email-new',
+        title: `跟进: ${subject}`,
+        description: `发送邮件给 ${to}，等待客户回复`,
+        status: 'pending',
+        deadline: reminderDate,
+        reminderAt: reminderDate,
+        createdAt: new Date().toISOString(),
+      });
     }
   };
 
@@ -317,23 +350,26 @@ Zhang San`,
     if (originalEmail) {
       updateEmailStatus(originalEmail.id, 'replied');
     }
-    alert('邮件已发送！');
-    navigate('/');
+    setShowReminderModal(false);
+    alert('邮件已发送！\n已自动创建跟进任务，请记得查看跟进任务页面。');
+    navigate('/tasks');
   };
 
   const handleApprovalSubmit = () => {
-    setShowReminderModal(true);
+    setApprovalStatus('pending');
   };
 
   const handleApprovalConfirm = () => {
-    setShowReminderModal(false);
-    if (approvalStatus === 'pending') {
-      setApprovalStatus('approved');
+    if (approvalStatus === 'rejected') {
+      setApprovalStatus('pending');
     }
   };
 
   const handleFinalSend = () => {
-    completeSend();
+    if (approvalStatus !== 'approved') {
+      return;
+    }
+    handleSend();
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -364,6 +400,12 @@ Zhang San`,
       case 'rejected': return 'bg-red-100 text-red-700';
       default: return '';
     }
+  };
+
+  const canSend = () => {
+    if (!to || !subject || !content) return false;
+    if (needsApproval && approvalStatus !== 'approved') return false;
+    return true;
   };
 
   return (
@@ -475,8 +517,14 @@ Zhang San`,
                     <input
                       type="checkbox"
                       checked={needsApproval}
-                      onChange={(e) => setNeedsApproval(e.target.checked)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      onChange={(e) => {
+                        if (approvalStatus === 'rejected' || approvalStatus === 'approved') {
+                          return;
+                        }
+                        setNeedsApproval(e.target.checked);
+                      }}
+                      disabled={approvalStatus === 'rejected' || approvalStatus === 'approved'}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
                     />
                     <span className="text-sm text-gray-600">需要审批</span>
                   </label>
@@ -579,33 +627,45 @@ Zhang San`,
                     </button>
                   )}
                   {needsApproval && approvalStatus === 'rejected' && (
-                    <button
-                      onClick={handleApprovalConfirm}
-                      className="px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
-                    >
-                      重新提交审批
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm">已驳回</span>
+                      <button
+                        onClick={handleApprovalConfirm}
+                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
+                      >
+                        重新提交审批
+                      </button>
+                    </div>
                   )}
                   {needsApproval && approvalStatus === 'approved' && (
                     <button
                       onClick={handleFinalSend}
-                      disabled={!to || !subject || !content}
+                      disabled={!canSend()}
                       className="btn-primary flex items-center gap-2 disabled:opacity-50"
                     >
                       <Send className="w-4 h-4" />
                       确认发送
                     </button>
                   )}
-                  {!needsApproval || approvalStatus !== 'approved' ? (
+                  {!needsApproval && (
                     <button
-                      onClick={needsApproval && approvalStatus === 'none' ? handleApprovalSubmit : handleSend}
-                      disabled={!to || !subject || !content || (needsApproval && approvalStatus === 'pending')}
+                      onClick={handleSend}
+                      disabled={!canSend()}
                       className="btn-primary flex items-center gap-2 disabled:opacity-50"
                     >
                       <Send className="w-4 h-4" />
-                      {needsApproval && approvalStatus === 'none' ? '提交审批' : '发送'}
+                      发送
                     </button>
-                  ) : null}
+                  )}
+                  {needsApproval && approvalStatus === 'pending' && (
+                    <button
+                      disabled
+                      className="px-4 py-2 bg-gray-100 text-gray-400 rounded-lg cursor-not-allowed flex items-center gap-2"
+                    >
+                      <Clock className="w-4 h-4" />
+                      等待审批
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -622,7 +682,7 @@ Zhang San`,
               </div>
               <div>
                 <h3 className="font-bold text-gray-900">设置跟进提醒</h3>
-                <p className="text-sm text-gray-500">邮件发送后自动创建跟进任务</p>
+                <p className="text-sm text-gray-500">发送后自动创建跟进任务</p>
               </div>
             </div>
 
@@ -636,7 +696,12 @@ Zhang San`,
                   className="input-field"
                   min={new Date().toISOString().slice(0, 16)}
                 />
-                <p className="text-xs text-gray-500 mt-1">建议：{isChinese ? '3天后' : '3 days later'}</p>
+                <p className="text-xs text-gray-500 mt-1">建议：3天后上午10:00回访</p>
+              </div>
+              <div className="bg-blue-50 rounded-lg p-3">
+                <p className="text-sm text-blue-700">
+                  发送后将自动创建跟进任务：「跟进: {subject || originalEmail?.subject}」，提醒时间：{reminderTime.replace('T', ' ')}
+                </p>
               </div>
             </div>
 
@@ -645,33 +710,16 @@ Zhang San`,
                 onClick={() => setShowReminderModal(false)}
                 className="flex-1 btn-secondary"
               >
-                取消
+                取消发送
               </button>
               <button
                 onClick={() => {
-                  if (originalEmail) {
-                    const reminderDate = reminderTime || new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
-                    addTask({
-                      userId: originalEmail.userId,
-                      emailId: originalEmail.id,
-                      title: `跟进: ${originalEmail.subject}`,
-                      description: `来自联系人: ${to}`,
-                      status: 'pending',
-                      deadline: reminderDate,
-                      reminderAt: reminderDate,
-                      createdAt: new Date().toISOString(),
-                    });
-                  }
-                  setShowReminderModal(false);
-                  if (approvalStatus === 'pending') {
-                    setApprovalStatus('approved');
-                  } else {
-                    completeSend();
-                  }
+                  createFollowUpTask(reminderTime);
+                  completeSend();
                 }}
                 className="flex-1 btn-primary"
               >
-                确认
+                确认发送
               </button>
             </div>
           </div>
